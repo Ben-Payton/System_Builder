@@ -1,0 +1,19 @@
+# 100 ethanol + 1000 water; box sized from a target density (~0.9 g/cm3)
+components:
+  - name: ethanol
+    smiles: CCO
+    count: 100
+  - name: water
+    smiles: O
+    count: 1000
+box:
+  density_g_cm3: 0.9
+forcefield:
+  small_molecule: gaff-2.11
+  water: tip3p
+nonbonded:
+  method: PME
+  cutoff_nm: 1.0
+constraints: HBonds
+tolerance_A: 2.0
+seed: 42
