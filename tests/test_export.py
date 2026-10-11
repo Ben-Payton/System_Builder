@@ -219,3 +219,41 @@ def test_write_amber_residue_count_guard(tmp_path):
         r.id = "0"
     with pytest.raises(ValueError, match="residue"):
         export.write_amber(system, mod.topology, mod.positions, tmp_path / "a.prmtop", tmp_path / "a.inpcrd")
+
+
+def _distorted(top, pos):
+    """Stretch O-H to 1.0 A and open H-O-H to 109.5 deg in every water."""
+    xyz = np.array(pos.value_in_unit(unit.nanometer))
+    for res in top.residues():
+        if res.name != "HOH":
+            continue
+        o, h1, h2 = [a.index for a in res.atoms()]
+        for h, sgn in ((h1, -1), (h2, 1)):
+            v = xyz[h] - xyz[o]
+            v /= np.linalg.norm(v)
+            xyz[h] = xyz[o] + 0.1 * v
+        mid = xyz[h1] + xyz[h2] - 2 * xyz[o]
+        mid /= np.linalg.norm(mid)
+        perp = xyz[h2] - xyz[h1]
+        perp /= np.linalg.norm(perp)
+        half = np.radians(109.5 / 2)
+        xyz[h1] = xyz[o] + 0.1 * (np.cos(half) * mid - np.sin(half) * perp)
+        xyz[h2] = xyz[o] + 0.1 * (np.cos(half) * mid + np.sin(half) * perp)
+    return xyz * unit.nanometer
+
+
+def test_export_projects_positions_onto_constraints(water_system, tmp_path):
+    system, top, pos, cfg = water_system
+    bad = _distorted(top, pos)
+    paths = export.export_all(system, top, bad, cfg, tmp_path / "out")
+    m = json.loads(paths["metadata"].read_text())
+    assert m["energy_check"]["ok"], m["energy_check"]
+    assert m["constraint_projection_max_displacement_nm"] > 0.001
+    # PDB stores 3 decimals in Angstrom, so its precision is ~1e-4 nm per coordinate
+    for tol, xyz in (
+        (3e-4, np.array(app.PDBFile(str(paths["pdb"])).positions.value_in_unit(unit.nanometer))),
+        (1e-5, np.array(app.AmberInpcrdFile(str(paths["inpcrd"])).positions.value_in_unit(unit.nanometer))),
+    ):
+        for i in range(system.getNumConstraints()):
+            a, b, d = system.getConstraintParameters(i)
+            assert abs(np.linalg.norm(xyz[a] - xyz[b]) - d.value_in_unit(unit.nanometer)) < tol

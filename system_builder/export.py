@@ -297,6 +297,22 @@ def write_metadata(path: Path, cfg: BuildConfig, system: openmm.System, topology
     return path
 
 
+def project_onto_constraints(system: openmm.System, positions, tol: float = 1e-6):
+    """Return (positions satisfying the system's constraints, max displacement in nm)."""
+    ctx = openmm.Context(
+        system, openmm.VerletIntegrator(0.001), openmm.Platform.getPlatformByName("Reference")
+    )
+    box = system.getDefaultPeriodicBoxVectors()
+    ctx.setPeriodicBoxVectors(*box)
+    ctx.setPositions(positions)
+    ctx.applyConstraints(tol)
+    new = ctx.getState(getPositions=True).getPositions()
+    del ctx
+    a = np.array(positions.value_in_unit(unit.nanometer))
+    b = np.array(new.value_in_unit(unit.nanometer))
+    return new, float(np.abs(a - b).max()) if len(a) else 0.0
+
+
 def export_all(
     system: openmm.System,
     topology: Topology,
@@ -310,6 +326,12 @@ def export_all(
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Geometry from the packer need not satisfy the constraints (e.g. non-TIP3P water
+    # conformers); the prmtop's explicit water terms would then carry energy the XML
+    # system does not. Project first and write the projected positions everywhere.
+    positions, max_disp = project_onto_constraints(system, positions)
+    if max_disp > 1e-3:
+        log.info("Projected positions onto constraints (max displacement %.4f nm)", max_disp)
     paths = {
         "xml": write_xml(system, out_dir / "system.xml"),
         "pdb": write_pdb(topology, positions, out_dir / "system.pdb"),
@@ -317,7 +339,7 @@ def export_all(
     paths["prmtop"], paths["inpcrd"] = write_amber(
         system, topology, positions, out_dir / "system.prmtop", out_dir / "system.inpcrd"
     )
-    extra: dict = {"warnings": []}
+    extra: dict = {"warnings": [], "constraint_projection_max_displacement_nm": max_disp}
     try:
         res = check_energy_consistency(system, paths["prmtop"], paths["inpcrd"], cfg)
         extra["energy_check"] = res
