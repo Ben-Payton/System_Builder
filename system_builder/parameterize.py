@@ -42,7 +42,11 @@ def build_system(
             stacklevel=2,
         )
 
-    gaff_mols = [pc.molecule for pc in components if not pc.is_water and not pc.is_monatomic]
+    gaff_mols = [
+        _with_charges(pc)
+        for pc in components
+        if not pc.is_water and not pc.is_monatomic
+    ]
     if gaff_mols:
         cache = None
         if cache_dir is not None:
@@ -82,6 +86,34 @@ def build_system(
 
     _scale_charges(system, topology, components)
     return system
+
+
+_AM1_ELEMENTS = {"H", "C", "N", "O", "F", "P", "S", "Cl", "Br", "I"}
+
+
+def _with_charges(pc: PreparedComponent):
+    """Return a copy of the molecule with partial charges, running AM1-BCC if needed."""
+    from copy import deepcopy
+
+    mol = deepcopy(pc.molecule)
+    if mol.partial_charges is not None:
+        return mol
+    try:
+        mol.assign_partial_charges("am1bcc")
+    except Exception as exc:  # toolkit raises assorted error types
+        bad = sorted({a.symbol for a in mol.atoms} - _AM1_ELEMENTS)
+        name = pc.component.name
+        smiles = mol.to_smiles(explicit_hydrogens=False)
+        if bad:
+            why = f"AmberTools sqm has no AM1 parameters for element(s) {', '.join(bad)}."
+        else:
+            lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
+            why = (lines[0][:200] if lines else type(exc).__name__) + "."
+        raise ValueError(
+            f"Could not assign AM1-BCC charges to component '{name}' ({smiles}): {why} "
+            "Provide partial charges in an SDF or mol2 file via `file:` for this component."
+        ) from exc
+    return mol
 
 
 def _scale_charges(system, topology, components) -> None:
