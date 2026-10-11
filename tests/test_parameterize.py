@@ -25,6 +25,10 @@ def make_pc(name, smiles, count, resname, water=False, mono=False, scale=1.0, ch
     return PreparedComponent(comp, mol, count, resname, water, mono, scale)
 
 
+# AM1 (sqm) has no boron parameters, so BF4- must carry user-supplied charges.
+BF4_Q = [-0.45, 0.8, -0.45, -0.45, -0.45]  # atom order F,B,F,F,F; sum = -1
+
+
 def build(comps, box=2.0, **kw):
     cfg = BuildConfig(components=[c.component for c in comps], box_size_nm=box,
                       cutoff_nm=0.8, seed=1, **kw)
@@ -72,10 +76,8 @@ def test_energy_finite_and_constraints(ethanol_water):
     comps, top, system = ethanol_water
     ctx = openmm.Context(system, openmm.VerletIntegrator(0.001),
                          openmm.Platform.getPlatformByName("Reference"))
-    cfg_pos = None  # positions from fresh pack
-    pc = comps
-    cfg = BuildConfig(components=[c.component for c in pc], box_size_nm=2.0, seed=1)
-    _, pos, _ = pack_system(pc, cfg)
+    cfg = BuildConfig(components=[c.component for c in comps], box_size_nm=2.0, seed=1)
+    _, pos, _ = pack_system(comps, cfg)
     ctx.setPositions(pos)
     e = ctx.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
     assert np.isfinite(e)
@@ -97,7 +99,7 @@ def test_nacl_in_water():
 def ionic_liquid():
     def comps(scale):
         return [make_pc("emim", "CCn1cc[n+](C)c1", 2, "EMI", scale=scale),
-                make_pc("bf4", "F[B-](F)(F)F", 2, "BF4", scale=scale)]
+                make_pc("bf4", "F[B-](F)(F)F", 2, "BF4", scale=scale, charges=BF4_Q)]
     unscaled = build(comps(1.0))
     scaled = build(comps(0.8))
     return unscaled, scaled
@@ -123,7 +125,7 @@ def test_ionic_liquid_scaled(ionic_liquid):
 
 def test_scaled_exceptions():
     (top, s1, _), (_, s2, _) = [build([make_pc("emim", "CCn1cc[n+](C)c1", 1, "EMI", scale=sc),
-                                       make_pc("bf4", "F[B-](F)(F)F", 1, "BF4", scale=sc)])
+                                       make_pc("bf4", "F[B-](F)(F)F", 1, "BF4", scale=sc, charges=BF4_Q)])
                                 for sc in (1.0, 0.8)]
     nb1 = [f for f in s1.getForces() if isinstance(f, openmm.NonbondedForce)][0]
     nb2 = [f for f in s2.getForces() if isinstance(f, openmm.NonbondedForce)][0]
