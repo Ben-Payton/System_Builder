@@ -1,5 +1,6 @@
-# [EMIM][BF4] ionic liquid, 100 ion pairs.
+# [EMIM][OTf] ionic liquid, 100 ion pairs.
 # charge_scale 0.8 scales the partial charges of both ions (net +-0.8 e per ion).
+# (BF4- is not used: AM1-BCC/sqm has no boron parameters.)
 # Fixed-charge force fields over-estimate ion-ion attraction because they ignore
 # electronic polarization; scaling charges to ~0.7-0.9 mimics it and gives more
 # realistic dynamics (viscosity, diffusion).
@@ -9,11 +10,11 @@ components:
     count: 100
     charge_scale: 0.8
     residue_name: EMI
-  - name: bf4
-    smiles: "F[B-](F)(F)F"
+  - name: otf
+    smiles: "C(F)(F)(F)S(=O)(=O)[O-]"
     count: 100
     charge_scale: 0.8
-    residue_name: BF4
+    residue_name: OTF
 box:
   density_g_cm3: 1.2
 forcefield:
