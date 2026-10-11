@@ -56,6 +56,7 @@ def build_system(
 
     methods = {
         "PME": app.PME,
+        "EWALD": app.Ewald,
         "LJPME": app.LJPME,
         "CUTOFFPERIODIC": app.CutoffPeriodic,
         "CUTOFFNONPERIODIC": app.CutoffNonPeriodic,
