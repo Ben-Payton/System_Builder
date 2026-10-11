@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "system_builder"
+version = "0.1.0"
+description = "Pack and parameterize simple OpenMM systems (GAFF2/TIP3P) and export portable files"
+requires-python = ">=3.10"
+
+[project.scripts]
+system-builder = "system_builder.cli:main"
+
+[tool.setuptools]
+packages = ["system_builder"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

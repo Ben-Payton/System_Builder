@@ -1,0 +1,15 @@
+name: system_builder
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - openmm
+  - openff-toolkit
+  - openff-interchange
+  - openmmforcefields
+  - ambertools
+  - packmol
+  - parmed
+  - pyyaml
+  - pytest
+  - pip
