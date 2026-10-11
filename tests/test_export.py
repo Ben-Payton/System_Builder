@@ -147,6 +147,6 @@ def test_run_simulation(water_system, tmp_path, fmt):
     out = tmp_path / "out"
     export.export_all(system, top, pos, cfg, out)
     rs = _load_run_simulation()
-    sim = rs.run(out, fmt=fmt, steps=20, platform="CPU", report_interval=10, workdir=tmp_path)
+    sim = rs.run(out, fmt=fmt, steps=20, platform="CPU", cutoff_nm=0.7, report_interval=10, workdir=tmp_path, minimize_iterations=50)
     assert sim.currentStep == 20
     assert (tmp_path / "trajectory.dcd").exists()

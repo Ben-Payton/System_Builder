@@ -1,0 +1,26 @@
+# [EMIM][BF4] ionic liquid, 100 ion pairs.
+# charge_scale 0.8 scales the partial charges of both ions (net +-0.8 e per ion).
+# Fixed-charge force fields over-estimate ion-ion attraction because they ignore
+# electronic polarization; scaling charges to ~0.7-0.9 mimics it and gives more
+# realistic dynamics (viscosity, diffusion).
+components:
+  - name: emim
+    smiles: "CCn1cc[n+](C)c1"
+    count: 100
+    charge_scale: 0.8
+    residue_name: EMI
+  - name: bf4
+    smiles: "F[B-](F)(F)F"
+    count: 100
+    charge_scale: 0.8
+    residue_name: BF4
+box:
+  density_g_cm3: 1.2
+forcefield:
+  small_molecule: gaff-2.11
+nonbonded:
+  method: PME
+  cutoff_nm: 1.0
+constraints: HBonds
+tolerance_A: 2.0
+seed: 42

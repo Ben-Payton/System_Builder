@@ -1,0 +1,25 @@
+# ~0.5 M NaCl in water. Monatomic ions are NOT parameterized with GAFF: they use the
+# Joung-Cheatham TIP3P ion parameters shipped with amber14/tip3p.xml.
+components:
+  - name: sodium
+    smiles: "[Na+]"
+    count: 9
+    residue_name: NA
+  - name: chloride
+    smiles: "[Cl-]"
+    count: 9
+    residue_name: CL
+  - name: water
+    smiles: O
+    count: 1000
+box:
+  size_nm: 3.1
+forcefield:
+  small_molecule: gaff-2.11
+  water: tip3p
+nonbonded:
+  method: PME
+  cutoff_nm: 1.0
+constraints: HBonds
+tolerance_A: 2.0
+seed: 42
