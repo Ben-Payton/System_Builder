@@ -62,7 +62,7 @@ def test_box_set(packed_box):
     bv = top.getPeriodicBoxVectors()
     assert bv is not None
     assert bv[0][0].value_in_unit(unit.nanometer) == pytest.approx(2.0)
-    assert box[1][1].value_in_unit(unit.nanometer) == pytest.approx(2.0) or box[1][1] == pytest.approx(2.0)
+    assert box[1][1] == pytest.approx(2.0)  # plain floats in nm
 
 
 def test_positions_in_box(packed_box):
@@ -92,6 +92,5 @@ def test_density_mode():
     for c in comps:
         mass += c.count * sum(a.mass.m_as("dalton") for a in c.molecule.atoms)
     vol = box[0][0] * box[1][1] * box[2][2]
-    vol = vol.value_in_unit(unit.nanometer) if hasattr(vol, "value_in_unit") else vol
-    density = mass * 1.66054 / vol  # dalton/nm^3 -> g/cm^3
+    density = mass * 1.66054e-3 / vol  # dalton/nm^3 -> g/cm^3
     assert density == pytest.approx(0.9, rel=0.05)
