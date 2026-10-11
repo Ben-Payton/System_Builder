@@ -34,11 +34,11 @@ Example configs are in `examples/`: `ethanol_water.yaml`, `ionic_liquid.yaml` ([
 | `box.size_nm` / `box.density_g_cm3` | Cubic edge length, or target density (exactly one) | required |
 | `forcefield.small_molecule` | Small-molecule force field | `gaff-2.11` |
 | `forcefield.water` | Water model | `tip3p` |
-| `nonbonded.method` | `PME`, ... | `PME` |
+| `nonbonded.method` | `PME`, `LJPME`, `Ewald`, `CutoffPeriodic`, `CutoffNonPeriodic`, `NoCutoff` | `PME` |
 | `nonbonded.cutoff_nm` | Nonbonded cutoff | `1.0` |
 | `constraints` | `None`, `HBonds`, `AllBonds`, `HAngles` | `HBonds` |
 | `tolerance_A` | Packmol minimum distance | `2.0` |
-| `seed` | Random seed for packing | none |
+| `seed` | Recorded in `metadata.json`; packmol placement is currently **not** seeded, so packing is not bit-reproducible | none |
 
 ### Force fields
 
@@ -118,6 +118,7 @@ python examples/run_simulation.py out/ --format amber --temperature 350 --pressu
 - AM1-BCC cannot charge molecules containing some elements (e.g. boron); provide charges via `file:` (see above).
 - Fixed-charge, non-polarizable force fields only; GAFF2/AM1-BCC quality applies to your molecules.
 - Cubic boxes only.
+- Packing is not reproducible: the interchange packmol wrapper does not expose a seed.
 - AM1-BCC charge generation is slow for large molecules; it runs once per species and is cached.
 - Monatomic ions use TIP3P-specific parameters, so combine them with TIP3P water only.
 - The energy check covers consistency between the XML and Amber exports, not the physical correctness of the parameters.
