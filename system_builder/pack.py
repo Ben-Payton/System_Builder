@@ -48,6 +48,8 @@ def pack_system(
     if len(residues) == len(expected):
         for res, name in zip(residues, expected):
             res.name = name
+    for i, res in enumerate(residues):
+        res.id = str(i + 1)
 
     box_nm = np.asarray(off_top.box_vectors.m_as("nanometer"))
     box = tuple(Vec3(*map(float, row)) for row in box_nm)

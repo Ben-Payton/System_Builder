@@ -94,3 +94,17 @@ def test_density_mode():
     vol = box[0][0] * box[1][1] * box[2][2]
     density = mass * 1.66054e-3 / vol  # dalton/nm^3 -> g/cm^3
     assert density == pytest.approx(0.9, rel=0.05)
+
+
+def test_residue_ids_unique_sequential(packed_box):
+    comps, cfg, (top, pos, box) = packed_box
+    ids = [r.id for r in top.residues()]
+    assert ids == [str(i + 1) for i in range(25)]
+
+
+def test_parmed_keeps_residues(packed_box):
+    import parmed
+
+    comps, cfg, (top, pos, box) = packed_box
+    struct = parmed.openmm.load_topology(top)
+    assert len(struct.residues) == 25

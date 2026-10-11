@@ -153,3 +153,27 @@ def test_user_partial_charges_used():
     got = charges_by_residue(top, system, "ETH")[0]
     # order of atoms in mol == order in topology
     assert got == pytest.approx(q, abs=1e-4)
+
+
+def test_ewald_method_accepted():
+    comps = [make_pc("water", "O", 8, "HOH", water=True)]
+    top, system, _ = build(comps, nonbonded_method="Ewald")
+    nb = [f for f in system.getForces() if isinstance(f, openmm.NonbondedForce)][0]
+    assert nb.getNonbondedMethod() == openmm.NonbondedForce.Ewald
+
+
+def test_am1bcc_failure_gives_clear_error():
+    comps = [make_pc("bf4", "F[B-](F)(F)F", 1, "BF4"),
+             make_pc("water", "O", 2, "HOH", water=True)]
+    with pytest.raises(ValueError, match=r"'bf4'.*F\[B-\]\(F\)\(F\)F.*\bB\b.*file:") as ei:
+        build(comps)
+    assert ei.value.__cause__ is not None
+    assert len(str(ei.value)) < 600
+
+
+def test_am1bcc_assigned_upfront_for_ethanol():
+    comps = [make_pc("ethanol", "CCO", 1, "ETH")]
+    top, system, _ = build(comps)
+    q = charges_by_residue(top, system, "ETH")[0]
+    assert sum(q) == pytest.approx(0.0, abs=1e-4)
+    assert comps[0].molecule.partial_charges is None  # input not mutated
