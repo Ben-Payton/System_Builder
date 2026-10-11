@@ -153,3 +153,10 @@ def test_user_partial_charges_used():
     got = charges_by_residue(top, system, "ETH")[0]
     # order of atoms in mol == order in topology
     assert got == pytest.approx(q, abs=1e-4)
+
+
+def test_ewald_method_accepted():
+    comps = [make_pc("water", "O", 8, "HOH", water=True)]
+    top, system, _ = build(comps, nonbonded_method="Ewald")
+    nb = [f for f in system.getForces() if isinstance(f, openmm.NonbondedForce)][0]
+    assert nb.getNonbondedMethod() == openmm.NonbondedForce.Ewald
