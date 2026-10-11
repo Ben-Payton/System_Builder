@@ -20,7 +20,7 @@ system-builder build examples/ethanol_water.yaml -o out/
 
 Options: `--overwrite` (allow writing into a non-empty directory; otherwise the build refuses), `-v` (debug logging, full tracebacks). Exit codes: 0 success, 1 build failure or non-empty output directory, 2 invalid configuration.
 
-Example configs are in `examples/`: `ethanol_water.yaml`, `ionic_liquid.yaml` ([EMIM][BF4] with charge scaling), `nacl_water.yaml`.
+Example configs are in `examples/`: `ethanol_water.yaml`, `ionic_liquid.yaml` ([EMIM][OTf] with charge scaling), `nacl_water.yaml`.
 
 ### Config reference
 
@@ -45,6 +45,15 @@ Example configs are in `examples/`: `ethanol_water.yaml`, `ionic_liquid.yaml` ([
 - Organic molecules and molecular ions: GAFF2 (`gaff-2.11`) with AM1-BCC charges (via AmberTools), unless the molecule file carries partial charges.
 - Water: Amber TIP3P (`amber14/tip3p.xml`).
 - Monatomic ions (`[Na+]`, `[Cl-]`, ...): Joung-Cheatham TIP3P ion parameters from `amber14/tip3p.xml`, not GAFF.
+- AM1-BCC (AmberTools sqm) does not support every element, e.g. boron, so BF4- cannot be charged. System_Builder stops with an error naming the component (CLI exit code 2). Supply partial charges yourself in an SDF/mol2 file via `file:` (such components use those charges instead of AM1-BCC):
+
+  ```yaml
+  components:
+    - name: bf4
+      file: bf4_charges.sdf   # relative to the config file; carries partial charges
+      count: 100
+      residue_name: BF4
+  ```
 - Charge scaling: `charge_scale` multiplies a component's partial charges (and the corresponding 1-4 exception charge products). Used for ionic liquids (typically 0.7-0.9) to mimic electronic polarization that fixed-charge force fields lack.
 
 ## Output files
@@ -57,7 +66,7 @@ Example configs are in `examples/`: `ethanol_water.yaml`, `ionic_liquid.yaml` ([
 | `metadata.json` | Config echo, package versions, atom/residue counts, box (nm), net charge, energy-check result, warnings, timestamp |
 | `gaff_cache.json` | GAFF template cache (reuses AM1-BCC charges on rebuilds) |
 
-After writing, the builder compares the potential energy of `system.xml` against a system rebuilt from the prmtop (same cutoff/method/constraints). A mismatch beyond rtol 1e-3 is recorded in `metadata.json` and logged as a warning; the export is not aborted.
+After writing, the builder compares the potential energy of `system.xml` against a system rebuilt from the prmtop (same cutoff/method/constraints), at the exported and at a perturbed geometry, and also compares the number and length of constraints. A mismatch beyond rtol 1e-3 is recorded in `metadata.json` and logged as a warning; the export is not aborted.
 
 ## Using the output in a pip-only environment
 
@@ -102,10 +111,11 @@ python examples/run_simulation.py out/ --format amber --temperature 350 --pressu
 - OpenMM XML is versioned. If the runtime OpenMM is older than the one in the build environment, use the Amber route.
 - The XML route bakes in cutoff, constraints and the PME setup. The Amber route lets you choose method, cutoff and constraints at load time.
 - The serialized system has no barostat; add your own for NPT.
-- Constrained bonds (e.g. HBonds, rigid water) have no bond force in the OpenMM system, so the prmtop stores their constraint length with a typical force constant (water O-H uses the amber14 TIP3P value). This only matters if you load the prmtop without constraints; the XML route is exact.
+- Constrained bonds (HBonds, rigid water) have no bond force in the OpenMM system, so the prmtop makes them explicit. Water is written as Amber TIP3P as tleap does (O-H and H-H bonds k=553 kcal/mol/A^2, H-O-H angle 100 kcal/mol/rad^2 at 104.52 deg), so `createSystem(constraints=HBonds)` gives rigid water again; other constrained bonds get their constraint length and a typical force constant. This only matters if you load the prmtop without constraints; the XML route is exact.
 
 ## Limitations
 
+- AM1-BCC cannot charge molecules containing some elements (e.g. boron); provide charges via `file:` (see above).
 - Fixed-charge, non-polarizable force fields only; GAFF2/AM1-BCC quality applies to your molecules.
 - Cubic boxes only.
 - AM1-BCC charge generation is slow for large molecules; it runs once per species and is cached.

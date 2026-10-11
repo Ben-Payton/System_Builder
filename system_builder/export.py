@@ -8,6 +8,7 @@ import platform as _platform
 from importlib import metadata
 from pathlib import Path
 
+import numpy as np
 import openmm
 from openmm import app, unit
 from openmm.app import Topology
@@ -53,18 +54,62 @@ def write_pdb(topology: Topology, positions: unit.Quantity, path: Path) -> Path:
 # OpenMM system, so parmed leaves them untyped and cannot write a prmtop. Give them
 # an equilibrium length from the constraint and a typical force constant. This only
 # matters if the user later loads the prmtop *without* constraints.
-_K_WATER_OH = 462750.4  # kJ/mol/nm^2 (OpenMM convention, E = k/2 (r-r0)^2), amber14 TIP3P
 _K_XH = 282000.0  # generic X-H, approx. GAFF c3-hc
 _K_OTHER = 250000.0
 
 
+_WATER_K = 553.0  # kcal/mol/A^2, Amber TIP3P OW-HW and HW-HW bonds (as tleap writes them)
+_WATER_ANGLE_K = 100.0  # kcal/mol/rad^2
+_WATER_THETA = 104.52  # degrees
+
+
 def _fill_constrained_bond_types(struct, system: openmm.System) -> None:
+    """Make constraint-only terms explicit so the prmtop reproduces the XML system.
+
+    OpenMM represents rigid water (and HBonds-constrained bonds) by constraints
+    only: no bond/angle force. An Amber prmtop needs real terms, so:
+    - rigid 3-atom O/H/H residues (all three pairs constrained) get Amber TIP3P
+      terms as tleap writes them: O-H and H-H bonds (k=553 kcal/mol/A^2) and an
+      H-O-H angle (k=100 kcal/mol/rad^2, 104.52 deg). AmberPrmtopFile.createSystem
+      then rebuilds the rigid water with rigidWater=True, or flexible water
+      with rigidWater=False.
+    - other constrained bonds get the constraint length and a typical force constant.
+    - a constraint between atoms that are not bonded raises ValueError.
+    """
     import parmed
 
     dist = {}
     for i in range(system.getNumConstraints()):
         a, b, d = system.getConstraintParameters(i)
         dist[frozenset((a, b))] = d.value_in_unit(unit.nanometer)
+
+    handled = set()
+    for res in struct.residues:
+        atoms = res.atoms
+        if len(atoms) != 3:
+            continue
+        o = [a for a in atoms if a.atomic_number == 8]
+        h = [a for a in atoms if a.atomic_number == 1]
+        if len(o) != 1 or len(h) != 2:
+            continue
+        pairs = [frozenset((o[0].idx, h[0].idx)), frozenset((o[0].idx, h[1].idx)),
+                 frozenset((h[0].idx, h[1].idx))]
+        if not all(p in dist for p in pairs):
+            continue
+        r_oh = 0.5 * (dist[pairs[0]] + dist[pairs[1]]) * 10.0
+        r_hh = dist[pairs[2]] * 10.0
+        theta = 2.0 * np.degrees(np.arcsin(r_hh / (2.0 * r_oh)))
+        bt_oh = parmed.BondType(_WATER_K, r_oh)
+        bt_hh = parmed.BondType(_WATER_K, r_hh)
+        at = parmed.AngleType(_WATER_ANGLE_K, theta)
+        struct.bond_types.extend([bt_oh, bt_hh])
+        struct.angle_types.append(at)
+        for bond in list(o[0].bonds):
+            bond.type = bt_oh
+        struct.bonds.append(parmed.Bond(h[0], h[1], type=bt_hh))
+        struct.angles.append(parmed.Angle(h[0], o[0], h[1], type=at))
+        handled.update(pairs)
+
     cache = {}
     for bond in struct.bonds:
         if bond.type is not None:
@@ -73,18 +118,23 @@ def _fill_constrained_bond_types(struct, system: openmm.System) -> None:
         r0 = dist.get(frozenset((a1.idx, a2.idx)))
         if r0 is None:
             raise ValueError(f"bond {a1.idx}-{a2.idx} has neither a bond force nor a constraint")
-        elems = {a1.atomic_number, a2.atomic_number}
-        if elems == {1, 8} and a1.residue.name in ("HOH", "WAT", "TIP3"):
-            k = _K_WATER_OH
-        elif 1 in elems:
-            k = _K_XH
-        else:
-            k = _K_OTHER
+        k = _K_XH if 1 in {a1.atomic_number, a2.atomic_number} else _K_OTHER
         key = (round(k), round(r0, 6))
         if key not in cache:
             cache[key] = parmed.BondType(k / (2 * 4.184 * 100.0), r0 * 10.0)
             struct.bond_types.append(cache[key])
         bond.type = cache[key]
+        handled.add(frozenset((a1.idx, a2.idx)))
+
+    struct.bond_types.claim()
+    struct.angle_types.claim()
+    bonded = {frozenset((b.atom1.idx, b.atom2.idx)) for b in struct.bonds}
+    for pair in dist:
+        if pair not in bonded:
+            i, j = sorted(pair)
+            raise ValueError(
+                f"constraint between non-bonded atoms {i}-{j} cannot be represented in an Amber prmtop"
+            )
 
 
 def write_amber(
@@ -96,6 +146,12 @@ def write_amber(
 
     prmtop, inpcrd = Path(prmtop), Path(inpcrd)
     struct = load_topology(topology, system, xyz=positions)
+    n_res = topology.getNumResidues()
+    if len(struct.residues) != n_res:
+        raise ValueError(
+            f"parmed produced {len(struct.residues)} residues but the topology has {n_res}; "
+            "residues must have unique ids (residues with identical chain/id/name get merged)"
+        )
     _fill_constrained_bond_types(struct, system)
     struct.save(str(prmtop), format="amber", overwrite=True)
     struct.save(str(inpcrd), format="rst7", overwrite=True)
@@ -114,12 +170,30 @@ def _energy(system: openmm.System, positions, box) -> float:
     return e.value_in_unit(unit.kilojoule_per_mole)
 
 
+def _constraints(system: openmm.System) -> dict:
+    out = {}
+    for i in range(system.getNumConstraints()):
+        a, b, d = system.getConstraintParameters(i)
+        out[frozenset((a, b))] = d.value_in_unit(unit.nanometer)
+    return out
+
+
+def _rel(a: float, b: float) -> float:
+    return abs(a - b) / max(abs(a), abs(b), 1e-12)
+
+
 def check_energy_consistency(
     system: openmm.System, prmtop: Path, inpcrd: Path, cfg: BuildConfig, rtol: float = 1e-3
 ) -> dict:
-    """Compare potential energy of the XML system vs a system rebuilt from prmtop.
+    """Compare the XML system against a system rebuilt from the prmtop.
 
-    Returns {"xml_kj_mol": float, "prmtop_kj_mol": float, "rel_diff": float, "ok": bool}.
+    Compares potential energy at the exported geometry and at a deterministically
+    perturbed, constraint-satisfying geometry (catches missing bond/angle terms that are zero at
+    equilibrium), plus the number and lengths of constraints.
+
+    Returns {"xml_kj_mol", "prmtop_kj_mol", "rel_diff", "perturbed_xml_kj_mol",
+    "perturbed_prmtop_kj_mol", "perturbed_rel_diff", "n_constraints_xml",
+    "n_constraints_prmtop", "constraint_distance_maxdiff_nm", "ok"}.
     """
     prm = app.AmberPrmtopFile(str(prmtop))
     crd = app.AmberInpcrdFile(str(inpcrd))
@@ -132,10 +206,33 @@ def check_energy_consistency(
     # Round-trip the xml system so we test the file content, not the live object.
     sys1 = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(system))
     box = crd.boxVectors
-    e1 = _energy(sys1, crd.positions, box)
-    e2 = _energy(sys2, crd.positions, box)
-    rel = abs(e1 - e2) / max(abs(e1), abs(e2), 1e-12)
-    return {"xml_kj_mol": e1, "prmtop_kj_mol": e2, "rel_diff": rel, "ok": bool(rel <= rtol)}
+    pos = crd.positions.value_in_unit(unit.nanometer)
+    rng = np.random.default_rng(12345)
+    pert = (np.array(pos) + rng.normal(scale=0.01, size=(len(pos), 3))) * unit.nanometer
+    # Project onto the constraints so rigid terms (e.g. the kept H-O-H angle of
+    # constrained water) are not probed at unphysical geometries.
+    pctx = openmm.Context(sys1, openmm.VerletIntegrator(0.001), openmm.Platform.getPlatformByName("Reference"))
+    if box is not None:
+        pctx.setPeriodicBoxVectors(*box)
+    pctx.setPositions(pert)
+    pctx.applyConstraints(1e-8)
+    pert = pctx.getState(getPositions=True).getPositions()
+    del pctx
+    e1, e2 = _energy(sys1, crd.positions, box), _energy(sys2, crd.positions, box)
+    p1, p2 = _energy(sys1, pert, box), _energy(sys2, pert, box)
+    c1, c2 = _constraints(sys1), _constraints(sys2)
+    if set(c1) == set(c2):
+        maxdiff = max((abs(c1[k] - c2[k]) for k in c1), default=0.0)
+    else:
+        maxdiff = float("inf")
+    rel, prel = _rel(e1, e2), _rel(p1, p2)
+    ok = rel <= rtol and prel <= rtol and set(c1) == set(c2) and maxdiff < 1e-4
+    return {
+        "xml_kj_mol": e1, "prmtop_kj_mol": e2, "rel_diff": rel,
+        "perturbed_xml_kj_mol": p1, "perturbed_prmtop_kj_mol": p2, "perturbed_rel_diff": prel,
+        "n_constraints_xml": len(c1), "n_constraints_prmtop": len(c2),
+        "constraint_distance_maxdiff_nm": maxdiff, "ok": bool(ok),
+    }
 
 
 def _versions() -> dict:

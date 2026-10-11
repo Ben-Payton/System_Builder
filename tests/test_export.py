@@ -150,3 +150,72 @@ def test_run_simulation(water_system, tmp_path, fmt):
     sim = rs.run(out, fmt=fmt, steps=20, platform="CPU", cutoff_nm=0.7, report_interval=10, workdir=tmp_path, minimize_iterations=50)
     assert sim.currentStep == 20
     assert (tmp_path / "trajectory.dcd").exists()
+
+
+def _prmtop_system(paths_dir, **kw):
+    prm = app.AmberPrmtopFile(str(paths_dir / "s.prmtop"))
+    return prm.createSystem(nonbondedMethod=app.PME, nonbondedCutoff=0.8 * unit.nanometer, **kw)
+
+
+def test_amber_water_is_rigid_like_xml(water_system, tmp_path):
+    """Regression: rigid TIP3P (constraints only) must stay rigid in the prmtop."""
+    system, top, pos, cfg = water_system
+    export.write_amber(system, top, pos, tmp_path / "s.prmtop", tmp_path / "s.inpcrd")
+    sys2 = _prmtop_system(tmp_path, constraints=app.HBonds, rigidWater=True)
+    assert sys2.getNumConstraints() == system.getNumConstraints()
+    n_water = sum(1 for r in top.residues() if r.name == "HOH")
+    assert system.getNumConstraints() == 3 * n_water
+    # flexible alternative: sane O-H / H-O-H parameters, no constraints
+    flex = _prmtop_system(tmp_path, constraints=None, rigidWater=False)
+    assert flex.getNumConstraints() == 0
+    for f in flex.getForces():
+        if isinstance(f, openmm.HarmonicAngleForce):
+            _, _, _, theta, k = f.getAngleParameters(0)
+            assert abs(theta.value_in_unit(unit.radian) - np.radians(104.52)) < 1e-3
+            assert abs(k.value_in_unit(unit.kilojoule_per_mole / unit.radian**2) - 100 * 4.184 * 2) < 1
+
+
+def test_check_reports_constraints_and_perturbed(water_system, tmp_path):
+    system, top, pos, cfg = water_system
+    pr, ic = export.write_amber(system, top, pos, tmp_path / "s.prmtop", tmp_path / "s.inpcrd")
+    res = export.check_energy_consistency(system, pr, ic, cfg)
+    assert res["n_constraints_xml"] == res["n_constraints_prmtop"] > 0
+    assert res["constraint_distance_maxdiff_nm"] < 1e-4
+    assert res["perturbed_rel_diff"] < 1e-3
+    assert res["ok"]
+
+
+def test_check_detects_missing_rigid_water(water_system, tmp_path):
+    """A prmtop whose water is not rigid must fail the check (energies at start match)."""
+    import copy
+
+    system, top, pos, cfg = water_system
+    pr, ic = export.write_amber(system, top, pos, tmp_path / "s.prmtop", tmp_path / "s.inpcrd")
+    sys_flex = copy.deepcopy(system)
+    # XML system with one extra constraint the prmtop cannot have
+    sys_flex.addConstraint(0, 3, 0.5)
+    res = export.check_energy_consistency(sys_flex, pr, ic, cfg)
+    assert not res["ok"]
+    assert res["n_constraints_xml"] != res["n_constraints_prmtop"]
+
+
+def test_write_amber_unbonded_constraint_errors(water_system, tmp_path):
+    import copy
+
+    system, top, pos, _ = water_system
+    bad = copy.deepcopy(system)
+    bad.addConstraint(0, 3, 0.5)  # atoms in different waters
+    with pytest.raises(ValueError, match="constraint"):
+        export.write_amber(bad, top, pos, tmp_path / "b.prmtop", tmp_path / "b.inpcrd")
+
+
+def test_write_amber_residue_count_guard(tmp_path):
+    ff = app.ForceField("amber14/tip3p.xml")
+    mod = app.Modeller(app.Topology(), [] * unit.nanometer)
+    mod.addSolvent(ff, boxSize=openmm.Vec3(1.2, 1.2, 1.2) * unit.nanometer)
+    system = ff.createSystem(mod.topology, nonbondedMethod=app.PME, nonbondedCutoff=0.5 * unit.nanometer,
+                             constraints=app.HBonds)
+    for r in mod.topology.residues():
+        r.id = "0"
+    with pytest.raises(ValueError, match="residue"):
+        export.write_amber(system, mod.topology, mod.positions, tmp_path / "a.prmtop", tmp_path / "a.inpcrd")
